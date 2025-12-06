@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Speech-to-Text Pad (SpeechRecognition API)</title>
+<style>
+  :root{
+    --bg:rgb(10, 1, 1);
+    --card:#000000;
+    --accent:#2209fd;
+    --muted:#1d01f3;
+    --text:#1500ff;
+    --danger:#050df5;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background: linear-gradient(180deg,#071029 0%, #071a2a 100%);
+    color:var(--text);
+    padding:28px;
+  }
+
+  .app{
+    width:900px;
+    max-width:96vw;
+    background: linear-gradient(180deg,#071827,#08121a);
+    border-radius:12px;
+    box-shadow: 0 10px 30px rgba(2,6,23,.6);
+    padding:18px;
+  }
+
+  header{ display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+  h1{ font-size:18px; margin:0; color:var(--accent); }
+  p.lead{ margin:0; color:var(--muted); font-size:13px; }
+
+  .controls{ display:flex; gap:8px; align-items:center; margin:12px 0 10px; flex-wrap:wrap; }
+  button{
+    background: linear-gradient(180deg,#1f2937,#0b1220);
+    border:1px solid rgba(255,255,255,0.04);
+    color:var(--text);
+    padding:10px 12px;
+    border-radius:8px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  button.primary{
+    background: linear-gradient(180deg,#064e3b,#065f46);
+    border: 1px solid rgba(16,185,129,.12);
+  }
+  button.warn{ background: linear-gradient(180deg,#4c1d1d,#6b1f1f); border-color: rgba(239,68,68,.12); }
+
+  .status{
+    padding:8px 12px;
+    border-radius:8px;
+    background: rgba(255,255,255,0.02);
+    color:var(--muted);
+    font-size:13px;
+  }
+
+  .layout{ display:grid; grid-template-columns: 1fr 340px; gap:14px; align-items:start; }
+  textarea{
+    width:100%;
+    min-height:360px;
+    background:var(--card);
+    border:1px solid rgba(255,255,255,0.04);
+    border-radius:8px;
+    padding:14px;
+    color:var(--text);
+    resize:vertical;
+    font-size:15px;
+    line-height:1.5;
+  }
+
+  .sidebar{
+    background: rgba(255,255,255,0.02);
+    padding:12px;
+    border-radius:8px;
+    height:100%;
+  }
+
+  .note-list{ margin:8px 0 0; display:flex; flex-direction:column; gap:8px; }
+  .note{
+    background: rgba(255,255,255,0.02);
+    padding:8px;
+    border-radius:6px;
+    font-size:14px;
+    color:var(--muted);
+  }
+
+  .hint{ font-size:13px; color:var(--muted); margin-top:8px; }
+  .muted{ color:var(--muted); font-size:13px; }
+  .kbd{ padding:4px 8px; border-radius:6px; background:rgba(255,255,255,0.03); font-weight:700; font-size:13px; }
+
+  .playing{ box-shadow: 0 8px 28px rgba(16,185,129,.12); outline: 2px solid rgba(16,185,129,.06); transform: scale(1.01); }
+
+  @media(max-width:880px){
+    .layout{ grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="Speech to text pad">
+    <header>
+      <div>
+        <h1>Speech-to-Text Pad</h1>
+        <p class="lead">Click <span class="kbd">Start</span>, speak — your words appear live.</p>
+      </div>
+      <div style="flex:1"></div>
+      <div class="status" id="featureStatus">Checking browser support</div>
+    </header>
+
+    <div class="controls" aria-hidden="false">
+      <button id="startBtn" class="primary">🎤 Start Listening</button>
+      <button id="stopBtn">⏹️ Stop</button>
+      <button id="clearBtn">🧹 Clear</button>
+      <button id="saveBtn"> Save as Note</button>
+      <div style="flex:1"></div>
+      <div id="listenState" class="status muted">Idle</div>
+    </div>
+
+    <div class="layout">
+      <div>
+        <textarea id="transcript" placeholder="Your speech will appear here..." aria-label="Transcription"></textarea>
+        <div class="hint muted">live text will be shown as you speak</div>
+      </div>
+
+      <aside class="sidebar" aria-label="Saved notes">
+        <strong>Saved Notes</strong>
+        <div class="note-list" id="notes"></div>
+        <div class="hint muted">Saved notes appear here.</div>
+        <div style="margin-top:10px; display:flex; gap:8px;">
+          <button id="exportBtn"> Export</button>
+          <button id="clearNotesBtn" class="warn">🗑️ Clear All</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+<script>
+
+window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const featureStatus = document.getElementById('featureStatus');
+if (!window.SpeechRecognition) {
+  featureStatus.textContent = 'SpeechRecognition API not supported in this browser.';
+  featureStatus.style.color = 'var(--danger)';
+} else {
+  featureStatus.textContent = 'SpeechRecognition available';
+  featureStatus.style.color = 'var(--accent)';
+}
+
+
+const startBtn = document.getElementById('startBtn');
+const stopBtn  = document.getElementById('stopBtn');
+const clearBtn = document.getElementById('clearBtn');
+const saveBtn  = document.getElementById('saveBtn');
+const transcriptEl = document.getElementById('transcript');
+const listenState = document.getElementById('listenState');
+const notesEl = document.getElementById('notes');
+const exportBtn = document.getElementById('exportBtn');
+const clearNotesBtn = document.getElementById('clearNotesBtn');
+
+let recognition = null;
+let isListening = false;
+let finalTranscript = '';   
+let interimTranscript = ''; 
+
+
+function loadNotes(){
+  const raw = localStorage.getItem('speech_notes_v1');
+  const arr = raw ? JSON.parse(raw) : [];
+  notesEl.innerHTML = '';
+  arr.forEach((n, idx) => {
+    const div = document.createElement('div');
+    div.className = 'note';
+    div.textContent = n;
+    notesEl.appendChild(div);
+  });
+}
+loadNotes();
+
+
+function createRecognition(){
+  if (!window.SpeechRecognition) return null;
+  const r = new window.SpeechRecognition();
+  r.continuous = true;        
+  r.interimResults = true;    
+  r.lang = 'en-US';           
+
+  r.onstart = () => {
+    isListening = true;
+    listenState.textContent = 'Listening…';
+    startBtn.classList.add('playing');
+  };
+
+  r.onend = () => {
+    
+    isListening = false;
+    listenState.textContent = 'Idle';
+    startBtn.classList.remove('playing');
+    
+  };
+
+  r.onerror = (ev) => {
+    console.error('recognition error', ev);
+    listenState.textContent = 'Error: ' + (ev.error || 'unknown');
+  };
+
+  r.onresult = (ev) => {
+    
+    interimTranscript = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      if (res.isFinal) {
+        finalTranscript += res[0].transcript;
+      } else {
+        interimTranscript += res[0].transcript;
+      }
+    }
+   
+    transcriptEl.value = (finalTranscript + interimTranscript).trim();
+    
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  };
+
+  return r;
+}
+
+
+startBtn.addEventListener('click', async () => {
+  if (!window.SpeechRecognition) return alert('SpeechRecognition not supported in this browser (use Chrome/Edge).');
+
+  
+  if (recognition && isListening) return;
+
+  
+  if (!recognition) {
+    recognition = createRecognition();
+  }
+
+  
+  try {
+    await (navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? navigator.mediaDevices.getUserMedia({audio:true}).then(stream => {
+      
+      stream.getTracks().forEach(t => t.stop());
+    }) : Promise.resolve());
+  } catch (err) {
+    console.warn('microphone permission denied or error', err);
+    alert('Microphone permission is required for speech recognition. Please allow microphone access.');
+    return;
+  }
+
+  try {
+    recognition.start();
+  } catch (err) {
+    
+    console.warn('start() error', err);
+  }
+});
+
+
+stopBtn.addEventListener('click', () => {
+  if (recognition && isListening) {
+    recognition.stop();
+  } else {
+    listenState.textContent = 'Idle';
+  }
+});
+
+
+clearBtn.addEventListener('click', () => {
+  finalTranscript = '';
+  interimTranscript = '';
+  transcriptEl.value = '';
+});
+
+
+saveBtn.addEventListener('click', () => {
+  const text = transcriptEl.value.trim();
+  if (!text) { alert('Nothing to save'); return; }
+  const raw = localStorage.getItem('speech_notes_v1');
+  const arr = raw ? JSON.parse(raw) : [];
+  arr.unshift(text); 
+  localStorage.setItem('speech_notes_v1', JSON.stringify(arr.slice(0, 50))); 
+  loadNotes();
+  alert('Saved note');
+});
+
+
+exportBtn.addEventListener('click', () => {
+  const raw = localStorage.getItem('speech_notes_v1');
+  const arr = raw ? JSON.parse(raw) : [];
+  if (!arr.length) { alert('No notes to export'); return; }
+  const blob = new Blob([arr.join('\n\n-----\n\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'speech_notes.txt';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+
+clearNotesBtn.addEventListener('click', () => {
+  if (!confirm('Clear all saved notes?')) return;
+  localStorage.removeItem('speech_notes_v1');
+  loadNotes();
+});
+
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.code === 'Space') {
+    if (isListening) {
+      recognition && recognition.stop();
+    } else {
+      startBtn.click();
+    }
+  }
+});
+
+
+transcriptEl.addEventListener('input', (e) => {
+  
+  finalTranscript = transcriptEl.value || '';
+});
+
+
+window.addEventListener('beforeunload', () => {
+  if (recognition && isListening) recognition.stop();
+});
+</script>
+</body>
+</html>
